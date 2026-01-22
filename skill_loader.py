@@ -3,21 +3,24 @@ import re
 import json
 import subprocess
 import sys
-import shlex
+from datetime import datetime
 
 class SkillLoader:
+    """技能加载器，负责从 SKILL.md 文件加载技能定义并执行"""
+    
     def __init__(self, skills_dir="skills"):
         self.skills_dir = skills_dir
-        self.tools_schema = [] 
-        self.tool_configs = {} 
+        self.tools_schema = []  # OpenAI 格式的工具定义
+        self.tool_configs = {}  # 工具配置信息
+        self.session_id = None  # 当前会话ID
 
     def load_all(self):
         """扫描目录加载所有 SKILL.md"""
         if not os.path.exists(self.skills_dir):
-            print(f"[Loader] Error: Directory {self.skills_dir} not found.", file=sys.stderr)
+            print(f"[SkillLoader] ⚠️ 目录不存在: {self.skills_dir}", file=sys.stderr)
             return
 
-        print(f"[Loader] Scanning skills in: {self.skills_dir}...", file=sys.stderr)
+        print(f"[SkillLoader] 🔍 扫描技能目录: {self.skills_dir}...", file=sys.stderr)
         for folder in os.listdir(self.skills_dir):
             folder_path = os.path.join(self.skills_dir, folder)
             md_path = os.path.join(folder_path, "SKILL.md")
@@ -25,9 +28,10 @@ class SkillLoader:
                 try:
                     self._parse_skill(folder, md_path)
                 except Exception as e:
-                    print(f"[Loader] Failed to load {folder}: {e}", file=sys.stderr)
+                    print(f"[SkillLoader] ❌ 加载技能 {folder} 失败: {e}", file=sys.stderr)
 
     def _parse_skill(self, folder_name, md_path):
+        """解析 SKILL.md 文件，提取工具定义"""
         with open(md_path, 'r', encoding='utf-8') as f:
             content = f.read()
         desc_match = re.search(r'## Description\s+(.*?)\s+##', content, re.DOTALL)
@@ -73,11 +77,21 @@ class SkillLoader:
             "command_template": command_template,
             "cwd": os.path.join(self.skills_dir, folder_name)
         }
-        print(f"[Loader] Loaded Skill: {folder_name}", file=sys.stderr)
+        print(f"[SkillLoader] ✅ 已加载技能: {folder_name}", file=sys.stderr)
+
+    def set_session_id(self, session_id=None):
+        """设置当前会话ID，用于区分不同分析任务的结果目录"""
+        if session_id:
+            self.session_id = session_id
+        else:
+            self.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        print(f"[SkillLoader] 📁 会话ID: {self.session_id}", file=sys.stderr)
+        return self.session_id
 
     def execute_tool(self, name, args_dict):
+        """执行指定工具"""
         if name not in self.tool_configs:
-            return json.dumps({"status": "error", "message": f"Tool {name} not found"})
+            return json.dumps({"status": "error", "message": f"工具 {name} 未找到"})
             
         config = self.tool_configs[name]
         template = config["command_template"]
@@ -94,27 +108,23 @@ class SkillLoader:
             else:
                 args_list.append((key, str(val)))
         
-        # 解析模板命令以获取脚本路径
-        # 模板格式类似: python skills/xxx/script.py --arg1 '{arg1}' --arg2 '{arg2}'
+        # 解析模板命令
         parts = template.split()
         if len(parts) < 2:
-            return json.dumps({"status": "error", "message": "Invalid command template"})
+            return json.dumps({"status": "error", "message": "无效的命令模板"})
         
-        python_cmd = parts[0]  # "python"
-        script_path = parts[1]  # "skills/xxx/script.py"
+        script_path = parts[1]
         
         # 构建命令列表
         cmd_list = [sys.executable, script_path]
         
         # 从模板中解析参数名映射
-        # 例如: --group_a '{group_a_ids}' 映射 group_a_ids -> --group_a
         arg_mapping = {}
         i = 2
         while i < len(parts):
             if parts[i].startswith('--'):
-                arg_name = parts[i]  # --group_a
+                arg_name = parts[i]
                 if i + 1 < len(parts):
-                    # 提取占位符名称，如 '{group_a_ids}' -> group_a_ids
                     placeholder = parts[i + 1].strip("'\"")
                     match = re.match(r'\{(\w+)\}', placeholder)
                     if match:
@@ -132,31 +142,53 @@ class SkillLoader:
             cmd_list.append(arg_flag)
             cmd_list.append(val)
             
-        print(f"[System Exec]: {' '.join(cmd_list)}", file=sys.stderr)
+        print(f"[SkillLoader] 🔧 执行: {' '.join(cmd_list)}", file=sys.stderr)
         
         try:
-            # 使用列表形式执行命令，避免 shell 解析问题
+            # Windows 环境设置环境变量确保 Python 子进程使用 UTF-8
+            env = os.environ.copy()
+            env['PYTHONIOENCODING'] = 'utf-8'
+            env['PYTHONUTF8'] = '1'
+            # 传递会话ID到子进程，用于结果目录管理
+            # 如果没有设置会话ID，自动创建一个
+            if not self.session_id:
+                self.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+            env['AITARGET_SESSION_ID'] = self.session_id
+            print(f"[SkillLoader] 📤 传递会话ID: {self.session_id}", file=sys.stderr)
+            
             result = subprocess.run(
                 cmd_list, 
-                shell=False,  # 不使用 shell，直接执行
+                shell=False,
                 capture_output=True, 
                 text=True,
                 encoding='utf-8', 
                 errors='replace',
-                cwd=os.path.dirname(os.path.abspath(__file__))  # 设置工作目录
+                cwd=os.path.dirname(os.path.abspath(__file__)),
+                env=env
             )
             
             if result.stderr:
-                print(f"[Tool Log]: {result.stderr}", file=sys.stderr)
+                print(f"[SkillLoader] 📝 工具日志: {result.stderr}", file=sys.stderr)
 
             output = result.stdout.strip()
             if not output and result.stderr:
-                 return json.dumps({"status": "error", "message": "No output", "debug": result.stderr})
+                return json.dumps({"status": "error", "message": "无输出", "debug": result.stderr})
             
             if not output:
-                 return json.dumps({"status": "error", "message": "Empty output from script"})
+                return json.dumps({"status": "error", "message": "脚本输出为空"})
 
             return output
 
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Execution Exception: {str(e)}"})
+            return json.dumps({"status": "error", "message": f"执行异常: {str(e)}"})
+
+    def get_tools_description(self):
+        """获取所有工具的简要描述"""
+        descriptions = []
+        for tool in self.tools_schema:
+            func = tool.get("function", {})
+            descriptions.append({
+                "name": func.get("name"),
+                "description": func.get("description", "")[:100] + "..."
+            })
+        return descriptions

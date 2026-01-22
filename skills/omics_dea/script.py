@@ -7,6 +7,7 @@ import sys
 import base64
 from scipy import stats
 import matplotlib.pyplot as plt
+from datetime import datetime
 
 def log(msg):
     sys.stderr.write(f"[DEA Log] {msg}\n")
@@ -22,13 +23,35 @@ def parse_arg(arg_val):
         log(f"JSON parse failed for: {repr(arg_val)}, error: {e}")
         return []
 
-
+# === 业务配置 ===
 FILENAME = "cleaned_data.csv"
 SUB_DIR = "data"
-RESULTS_DIR = "results"
+# 使用绝对路径存储结果
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))  # DeepSeekMathAgent
+RESULTS_BASE_DIR = os.path.join(PROJECT_ROOT, "results")
+os.makedirs(RESULTS_BASE_DIR, exist_ok=True)
+
+def get_session_results_dir(session_id=None):
+    """获取当前会话的结果目录"""
+    if session_id:
+        folder_name = session_id
+    else:
+        # 从环境变量获取会话ID
+        folder_name = os.environ.get("AITARGET_SESSION_ID")
+        if folder_name:
+            log(f"使用环境变量会话ID: {folder_name}")
+        else:
+            # 如果没有环境变量，使用时间戳
+            folder_name = datetime.now().strftime("%Y%m%d_%H%M%S")
+            log(f"未找到会话ID环境变量，使用时间戳: {folder_name}")
+    session_dir = os.path.join(RESULTS_BASE_DIR, folder_name)
+    os.makedirs(session_dir, exist_ok=True)
+    return session_dir
 
 def load_data():
     script_dir = os.path.dirname(os.path.abspath(__file__))
+    # 项目根目录是 skills 的上一级 (DeepSeekMathAgent)
     project_root = os.path.dirname(os.path.dirname(script_dir))
     paths = [
         os.path.join(project_root, SUB_DIR, FILENAME),
@@ -94,6 +117,11 @@ def plot_volcano(res_df, output_path):
     plt.close()
 
 def main():
+    # 设置标准输出编码为 UTF-8
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+    
     parser = argparse.ArgumentParser()
     parser.add_argument("--group_a", required=True)
     parser.add_argument("--group_b", required=True)
@@ -114,7 +142,8 @@ def main():
             return
 
         safe_prefix = "".join([c for c in args.prefix if c.isalnum() or c in ('_','-')])
-        plot_path = os.path.join(RESULTS_DIR, f"{safe_prefix}_volcano.png")
+        session_dir = get_session_results_dir()
+        plot_path = os.path.join(session_dir, f"{safe_prefix}_volcano.png")
         plot_volcano(res_df, plot_path)
 
         sig_df = res_df[res_df['P_Value'] < 0.05]
@@ -129,7 +158,12 @@ def main():
 
         print(json.dumps({
             "status": "success",
-            "data": {"top_genes": top_genes, "summary": summary, "plot_path": plot_path}
+            "data": {
+                "top_genes": top_genes, 
+                "summary": summary, 
+                "plot_path": plot_path,
+                "plot_url": os.path.relpath(plot_path, RESULTS_BASE_DIR).replace("\\", "/")  # 返回相对路径用于API访问
+            }
         }, ensure_ascii=False))
 
     except Exception as e:
