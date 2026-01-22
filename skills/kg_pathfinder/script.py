@@ -4,10 +4,17 @@ import sys
 import json
 import requests
 from py2neo import Graph
+from dotenv import load_dotenv
+
+# 加载 .env 文件
+load_dotenv()
 
 # === 配置区 ===
 
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "sk-ac20fb761a324d7888bda5e07178f8b9")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+if not DEEPSEEK_API_KEY:
+    sys.stderr.write("[KG Error] DEEPSEEK_API_KEY not found in .env file\n")
+    sys.exit(1)
 API_URL = "https://api.deepseek.com/chat/completions"
 MODEL_NAME = "deepseek-chat"
 

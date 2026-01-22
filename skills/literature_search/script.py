@@ -7,6 +7,10 @@ import time
 import re
 import numpy as np
 import requests
+from dotenv import load_dotenv
+
+# 加载 .env 文件
+load_dotenv()
 
 # 尝试导入依赖
 try:
@@ -18,7 +22,10 @@ except ImportError as e:
     sys.exit(1)
 
 # === 配置区 ===
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "sk-ac20fb761a324d7888bda5e07178f8b9")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+if not DEEPSEEK_API_KEY:
+    sys.stderr.write("[Lit Error] DEEPSEEK_API_KEY not found in .env file\n")
+    sys.exit(1)
 API_URL = "https://api.deepseek.com/chat/completions"
 MODEL_NAME = "deepseek-chat"
 LITERATURE_VALIDATION_ANALYSIS = """

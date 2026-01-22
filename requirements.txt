@@ -1,0 +1,8 @@
+requests
+python-dotenv
+pymongo
+faiss-cpu
+sentence-transformers
+py2neo
+pandas
+gseapy
